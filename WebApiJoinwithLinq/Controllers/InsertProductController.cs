@@ -1,6 +1,11 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using WebApiJoinwithLinq.Data;
 using WebApiJoinwithLinq.Model.DTO;
 
@@ -11,12 +16,80 @@ namespace WebApiJoinwithLinq.Controllers
     public class InsertProductController : ControllerBase
     {
         private readonly ApplicationDbcontext entity;
-        public InsertProductController(ApplicationDbcontext context)
+        private readonly JwtSettings jwtsettings;
+
+        public InsertProductController(ApplicationDbcontext context, JwtSettings _jwtSettings)
         {
             entity = context;
+            jwtsettings = _jwtSettings;
         }
+
+        [HttpPost]
+        [Route("Register")]
+        public async Task<IActionResult> Register(string uname, string pswd)
+        {
+            if(string.IsNullOrEmpty(uname)||string.IsNullOrEmpty(pswd))
+            {
+                return BadRequest("Username and password cannot be empty");
+            }
+            var checkuser = await entity.Logins.FirstOrDefaultAsync(u => u.Username == uname && u.Password == pswd);
+            if(checkuser!=null)
+            {
+                return BadRequest("user already exists");
+            }
+            var user = new Model.Entities.Login
+            {
+                Username = uname,
+                Password = pswd
+            };
+            await entity.Logins.AddAsync(user);
+            await entity.SaveChangesAsync();
+            return CreatedAtAction(nameof(Register), new { id = user.Id }, user);
+        }
+
+        [HttpGet]
+        [Route("Login")]
+        public async Task<IActionResult> Login(string uname,string pswd)
+        {
+           
+
+            if(string.IsNullOrEmpty(uname)||string.IsNullOrEmpty(pswd))
+            {
+                return BadRequest("Username and password are required");
+            }
+            var user = await entity.Logins.FirstOrDefaultAsync(u=>u.Username==uname && u.Password==pswd);
+            if(user==null)
+            {
+                return Unauthorized("Invalid User");
+            }
+
+            // Here you can implement token generation or session management as needed
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(jwtsettings.Key);
+
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.Name,user.Username),
+                    new Claim(ClaimTypes.NameIdentifier,user.Id.ToString())
+                }),
+                Expires = DateTime.UtcNow.AddMinutes(60),
+                Issuer = jwtsettings.Issuer,
+                Audience = jwtsettings.Audience,
+                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256)
+
+            };
+            var token =tokenHandler.CreateToken(tokenDescriptor);
+            var tokenString = tokenHandler.WriteToken(token);
+
+
+            return Ok(new {token=tokenString});
+        }
+
         [HttpPost]
         [Route("InsertProduct")]
+        [Authorize]
         public async Task<IActionResult> PostProduct(string name, int categoryid)
         {
             if (string.IsNullOrEmpty(name) || categoryid == 0)
@@ -38,6 +111,7 @@ namespace WebApiJoinwithLinq.Controllers
         }
         [HttpPost]
         [Route("InsertCategory")]
+        [Authorize]
         public async Task<IActionResult> PostCategory(string name)
         {
             if (string.IsNullOrEmpty(name))
@@ -57,6 +131,7 @@ namespace WebApiJoinwithLinq.Controllers
         }
         [HttpGet]
         [Route("Getjoined")]
+        [Authorize]
         public async Task<IActionResult> GetJoined(int pid)
         {
             if (pid == 0)
@@ -86,6 +161,7 @@ namespace WebApiJoinwithLinq.Controllers
         }
         [HttpGet]
         [Route("Getalljoined")]
+        [Authorize]
         public async Task<IActionResult> GetAllJoined()
         {
             var result = await (
